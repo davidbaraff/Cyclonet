@@ -34,7 +34,7 @@ public struct CyclonetQueryError : Error, CustomStringConvertible {
      - unexpectedDataType:  returned type not what was expected
      - clientError:         server raised an error indicating the client was at fault
      - serverError:         server raised an error for a known server error
-     - badReturnCodeError:  server returned a non-zero return code
+     - badReturnCodeError:  server returned a status indicating an error
      - unknownServerError:  server unexectedly raised an error
      - dictionaryKeyError:  return dictionary doesn't have expected key
      - dictionaryValueTypeError: returned dictionary value has wrong type
@@ -51,7 +51,7 @@ public struct CyclonetQueryError : Error, CustomStringConvertible {
         case unexpectedDataType(String)
         case clientError(String, String)
         case serverError(String, String)
-        case badReturnCodeError(Int)
+        case badReturnCodeError
         case unknownServerError(String)
         case dictionaryKeyError(String)
         case dictionaryValueTypeError(String, String)
@@ -92,8 +92,8 @@ public struct CyclonetQueryError : Error, CustomStringConvertible {
             return exception + "\n" + traceback
         case .serverError (let exception, let traceback):
             return exception + "\n" + traceback
-        case .badReturnCodeError(let code):
-            return "non-zero server return code: code = \(code)"
+        case .badReturnCodeError:
+            return "errored server return code"
         case .unknownServerError(let descr):
             return "unknown server error: status code = \(statusCode): \(descr)"
         case .dictionaryKeyError(let key):
@@ -121,20 +121,6 @@ public struct CyclonetQueryError : Error, CustomStringConvertible {
             return description
         }
     }
-    
-    /// True if the failure was because there was no connection to Pixar.
-    public var noPixarConnection: Bool {
-        switch(failure) {
-        case .unknownHost:
-            fallthrough
-        case .connectionFailure:
-            fallthrough
-        case .offline:
-            return true
-        default:
-            return false
-        }
-    }
 }
 
 
@@ -146,17 +132,6 @@ public func cyclonetURLSession() -> URLSession {
     return URLSession(configuration: sessionConfig)
 }
 
-
-/// Indicate if an error is due to having no pixar connection.
-///
-/// - Parameter error: raises error
-/// - Returns: true if the error is a CyclonetQueryError indicating failure due to contact with Pixar
-public func isDisconnectedFromPixarError(_ error: Error) -> Bool {
-    if let error = error as? CyclonetQueryError {
-        return error.noPixarConnection
-    }
-    return false
-}
 
 /// A globally available cyclonet URL session.
 #if !os(Linux)
@@ -361,13 +336,13 @@ private func decodeCyclonetResponse<T>(data: Data, response: HTTPURLResponse) th
                                     statusCode:response.statusCode)
         }
         
-        guard let resultCode = resultTuple[0] as? Int else {
-            throw CyclonetQueryError(.unexpectedDataType("expected integer in tuple at position 0; got \(type(of: resultTuple[0])) instead"),
+        guard let resultCode = resultTuple[0] as? Bool else {
+            throw CyclonetQueryError(.unexpectedDataType("expected bool in tuple at position 0; got \(type(of: resultTuple[0])) instead"),
                                     statusCode:response.statusCode)
         }
         
-        guard resultCode == 0 else {
-            throw CyclonetQueryError(.badReturnCodeError(resultCode))
+        guard resultCode else {
+            throw CyclonetQueryError(.badReturnCodeError)
         }
         
         guard let resultValue = resultTuple[1] as? T else {
