@@ -8,53 +8,6 @@
 
 import Foundation
 import Debmate
-#if os(Linux)
-import OpenCombineShim
-import FoundationNetworking
-#else
-import Combine
-#endif
-
-/// Authenticate a pixar login
-///
-/// - Parameters:
-///   - login: user login
-///   - password: password
-/// - Returns: true if the password is valid
-/// - Throws: If there is an issue contacting the signon server.
-public func authenticatePixarLogin(login: String, password: String) throws -> Bool {
-    if Debmate.Util.md5Digest(password) == "7c859ac6e5ba236387b624690c394597" {
-        return true
-    }
-    
-    var actualLogin = login
-    if let index = login.rangeOfCharacter(from: CharacterSet(charactersIn: ":")) {
-        actualLogin = String(login[...index.lowerBound])
-    }
-
-    let url = try Debmate.Util.createURL(host: "signon.pixar.com",
-                                         parameters: ["login" : actualLogin,
-                                                      "password" : password],
-                                         https:true)
-    let urlSession = cyclonetURLSession()
-    _ = try urlSession.httpQueryAndWait(url, post:true)
-    
-    if let cookies = urlSession.configuration.httpCookieStorage?.cookies {
-        return cookies.first { $0.name == "pixauth" } != nil
-    }
-
-    return false
-}
-
-
-/// A publisher that can be used to listen for changes to Pixar's network reachability status.
-public let pixarReachability = Debmate.Reachability(hostName: "asset2.pixar.com", initialState: true) {
-    #if !os(Linux)
-    return Debmate.Util.httpRequestPublisher(host: "asset2.pixar.com", command: "hello").map { _ in true }.eraseToAnyPublisher()
-    #else
-    return CurrentValueSubject<Bool, Error>(true).eraseToAnyPublisher()
-    #endif
-}
 
 class DownloadProgressObserver : NSObject {
     weak var sessionTask: URLSessionTask!
@@ -67,24 +20,18 @@ class DownloadProgressObserver : NSObject {
         self.progressHandler = progressHandler
         semaphore = DispatchSemaphore(value: 0)
         super.init()
-        #if !os(Linux)
         if progressHandler != nil {
             sessionTask.addObserver(self, forKeyPath: "countOfBytesReceived", options: .new, context: nil)
         }
-        #endif
     }
     
-    #if !os(Linux)
     override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
         progressHandler?(sessionTask.countOfBytesReceived, sessionTask.countOfBytesExpectedToReceive)
     }
-    #endif
     
     func shutdown() {
         if progressHandler != nil {
-            #if !os(Linux)
             sessionTask.removeObserver(self, forKeyPath: "countOfBytesReceived")
-            #endif
         }
     }
 }

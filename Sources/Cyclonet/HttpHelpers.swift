@@ -8,13 +8,6 @@
 
 import Foundation
 import Debmate
-#if !os(Linux)
-import Combine
-#else
-import OpenCombineShim
-import FoundationNetworking
-import CurlHelper
-#endif
 
 public typealias CyclonetDictionary = [String : Any]
 
@@ -132,13 +125,8 @@ public func cyclonetURLSession() -> URLSession {
     return URLSession(configuration: sessionConfig)
 }
 
-
 /// A globally available cyclonet URL session.
-#if !os(Linux)
 public let sharedCyclonetURLSession = cyclonetURLSession()
-#else
-public var sharedCyclonetURLSession: URLSession { cyclonetURLSession() }
-#endif
 
 extension Dictionary {
     
@@ -237,7 +225,6 @@ public func translateError(url: URL, error: NSError) -> CyclonetQueryError {
     }
 }
 
-#if !os(Linux)
 fileprivate class ProgressObserver : NSObject {
     weak var sessionTask: URLSessionTask?
     var handler: ((Int64, Int64) -> ())?
@@ -259,7 +246,6 @@ fileprivate class ProgressObserver : NSObject {
         }
     }
 }
-#endif
 
 fileprivate typealias DataURLResponseError = (data: Data?, response: URLResponse?, error: NSError?)
 
@@ -281,27 +267,6 @@ fileprivate func resumeContinuation(continuation: CheckedContinuation<(Data, HTT
     }
 
     return continuation.resume(throwing: CyclonetQueryError(.unknownResponseType("unexpected nil response")))
-}
-
-
-fileprivate func sendOrComplete(publisher: PassthroughSubject<(Data, HTTPURLResponse), Error>, result: DataURLResponseError, url: URL) {
-    if let error = result.error {
-        publisher.send(completion: .failure(translateError(url: url, error: error)))
-    }
-    else if let response = result.response as? HTTPURLResponse {
-        if let data = result.data {
-            publisher.send((data, response))
-        }
-        else {
-            publisher.send(completion: .failure(CyclonetQueryError(.unknownResponseType("unexpected nil data with valid HTTPURLResponse"))))
-        }
-    }
-    else if let response = result.response {
-        publisher.send(completion: .failure(CyclonetQueryError(.unknownResponseType(String(describing: type(of: response))))))
-    }
-    else {
-        publisher.send(completion: .failure(CyclonetQueryError(.unknownResponseType("unexpected nil response"))))
-    }
 }
 
 private func decodeCyclonetResponse<T>(data: Data, response: HTTPURLResponse) throws -> T {
@@ -371,50 +336,6 @@ private func decodeCyclonetResponse<T>(data: Data, response: HTTPURLResponse) th
                             statusCode:response.statusCode)
 }
 
-extension Publisher {
-    /// Block until publisher has completed.
-    /// - Parameter publisher: Publisher to wait on.
-    /// - Throws: The error in the publisher, if there is one.
-    /// - Returns: The first value the publisher delivers.
-    ///
-    /// This call blocks until either the first value is received or the publisher completes with an error (which is then rethrown).
-    public func blockTillCompletion(_ queue: DispatchQueue) throws -> Output {
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Output?
-        var failure: Failure?
-        
-        let cancellable: Cancellable = queue.sync {
-            self.sink(receiveCompletion: { completion in
-                switch completion {
-                case .failure(let error):
-                    failure = error
-                    semaphore.signal()
-                case .finished:
-                    ()
-                }
-            }) { value in
-                result = value
-                semaphore.signal()
-            }
-        }
-        
-        AsyncTask.addCancelationHandler {
-            queue.sync {
-                cancellable.cancel()
-            }
-        }
-        
-        _ = semaphore.wait(timeout: .distantFuture)
-        queue.sync { cancellable.cancel() }
-        
-        if let result = result {
-            return result
-        }
-        
-        throw failure!
-    }
-}
-
 extension URLSession {
     // MARK: - async REST calls
     
@@ -437,22 +358,15 @@ extension URLSession {
             urlRequest.httpMethod = "POST"
         }
         
-        #if !os(Linux)
         var progressObserver: ProgressObserver!
-        #endif
 
         return try await withCheckedThrowingContinuation { continuation in
             let task = self.dataTask(with: urlRequest) { data, response, error in
 
-                #if !os(Linux)
                 progressObserver.shutdown()
-                #endif
                 resumeContinuation(continuation: continuation, result: (data: data, response: response, error: error as NSError?))
             }
-            #if !os(Linux)
             progressObserver = ProgressObserver(sessionTask: task, handler: progressHandler)
-            #endif
-
             task.resume()
         }
     }
@@ -469,27 +383,20 @@ extension URLSession {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         
-        #if !os(Linux)
         var progressObserver: ProgressObserver!
-        #endif
         
         return try await withCheckedThrowingContinuation { continuation in
             let task = self.uploadTask(with: urlRequest, fromFile: fileURL) {
                 data, response, error in
                 
-                #if !os(Linux)
                 progressObserver.shutdown()
-                #endif
-
                 resumeContinuation(continuation: continuation, result: (data: data, response: response, error: error as NSError?))
             }
-            #if !os(Linux)
+
             progressObserver = ProgressObserver(sessionTask: task, handler: progressHandler)
-            #endif
             task.resume()
         }
     }
-    
     
     /// Execute a Cyclonet query, returning the result.
     /// - Parameters:
@@ -521,266 +428,6 @@ extension URLSession {
     ///   - body: body for query (optional)
     public func cyclonetHttpCall(_ url: URL, body: Data? = nil) async throws {
         let _: Any = try await cyclonetHttpQuery(url, body: body)
-    }
-    
-    // MARK: - Publisher based REST calls
-    
-    /// Launch a query.
-    /// - Parameters:
-    ///   - url: URL for query
-    ///   - body: body for query (optional)
-    ///   - post: if the method should be post
-    ///   - progressHandler:  optional progress callback, taking (nbytesSent, totalSize)
-    ///
-    /// - Returns: Publisher.
-    public func httpQuery(_ url: URL, body: Data? = nil, post: Bool = false, queue: DispatchQueue? = nil,
-                          progressHandler: ((Int64, Int64) -> Void)? = nil) -> AnyPublisher<(Data, HTTPURLResponse), Error>  {
-        var urlRequest = URLRequest(url: url)
-        
-        if let body = body {
-            urlRequest.httpBody = body
-            urlRequest.httpMethod = "POST"
-        }
-        else if post {
-            urlRequest.httpMethod = "POST"
-        }
-        
-        let publisher = PassthroughSubject<(Data, HTTPURLResponse), Error>()
-        #if !os(Linux)
-        var progressObserver: ProgressObserver!
-        #endif
-
-        let task = self.dataTask(with: urlRequest) {
-            data, response, error in
-            
-            #if !os(Linux)
-            progressObserver.shutdown()
-            #endif
-            if let queue = queue {
-                queue.sync {
-                    sendOrComplete(publisher: publisher, result: (data: data, response: response, error: error as NSError?), url: url)
-                }
-            }
-            else {
-                sendOrComplete(publisher: publisher, result: (data: data, response: response, error: error as NSError?), url: url)
-            }
-        }
-
-        #if !os(Linux)
-        progressObserver = ProgressObserver(sessionTask: task, handler: progressHandler)
-        #endif
-
-        if let queue = queue {
-            return publisher.receive(on: queue).handleEvents(receiveSubscription: { _ in task.resume() },
-               receiveCancel: { task.cancel() }).eraseToAnyPublisher()
-        }
-        else {
-            return publisher.handleEvents(receiveSubscription: { _ in task.resume() },
-               receiveCancel: { task.cancel() }).eraseToAnyPublisher()
-        }
-    }
-    
-    /// Upload data from a file and wait
-    /// - Parameters:
-    ///   - url: URL for post
-    ///   - fileURL: a file URL for the body
-    ///   - progressHandler: optional progress callback, taking (nbytesSent, totalSize)
-    /// - Returns: publisher.
-    /// - Note: The request is made as a POST.
-    public func httpQuery(_ url: URL, fromFile fileURL: URL, queue: DispatchQueue? = nil,
-                          progressHandler: ((Int64, Int64) -> Void)? = nil) -> AnyPublisher<(Data, HTTPURLResponse), Error> {
-        var urlRequest = URLRequest(url: url)
-        
-        urlRequest.httpMethod = "POST"
-        
-        let publisher = PassthroughSubject<(Data, HTTPURLResponse), Error>()
-        #if !os(Linux)
-        var progressObserver: ProgressObserver!
-        #endif
-        
-        let task = self.uploadTask(with: urlRequest, fromFile: fileURL) {
-            data, response, error in
-            
-            #if !os(Linux)
-            progressObserver.shutdown()
-            #endif
-            
-            if let queue = queue {
-                queue.sync { sendOrComplete(publisher: publisher, result: (data: data, response: response, error: error as NSError?), url: url) }
-            }
-            else {
-                sendOrComplete(publisher: publisher, result: (data: data, response: response, error: error as NSError?), url: url)
-            }
-        }
-
-        #if !os(Linux)
-        progressObserver = ProgressObserver(sessionTask: task, handler: progressHandler)
-        #endif
-        if let queue = queue {
-            return publisher.receive(on: queue).handleEvents(receiveSubscription: { _ in task.resume() }, receiveCancel: { task.cancel() }).eraseToAnyPublisher()
-        }
-        else {
-            return publisher.handleEvents(receiveSubscription: { _ in task.resume() }, receiveCancel:{ task.cancel() }).eraseToAnyPublisher()
-        }
-    }
-    
-    /// Execute a query, returning a publisher with the result.
-    /// - Parameters:
-    ///   - url: URL for query
-    ///   - body: body for query (optional)
-    ///   - progressHandler: optional progress callback, taking (nbytesSent, totalSize)
-    /// - Returns: Specified datatype
-    ///
-    /// The return json data has the format
-    ///        ["<protocol-version>", <data>]
-    ///
-    /// When the request completes normally, <data> is returned.
-    /// If the server responds to the query but encounters an eror, the returned
-    /// json object has the form
-    ///
-    ///  ["<protocol-version>", statusCode, "<shortError>", "<traceback>"]
-    ///
-    /// and a CyclonetError of either ClientError or ServerError is delivered as the complettion
-    /// result to the publisher.
-    public func cyclonetHttpQuery<T>(_ url: URL, body: Data? = nil, queue: DispatchQueue? = nil,
-                                    progressHandler: ((Int64, Int64) -> Void)? = nil) -> AnyPublisher<T, Error> {
-        return httpQuery(url, body: body, queue: queue, progressHandler: progressHandler)
-            .tryMap { try decodeCyclonetResponse(data: $0.0, response: $0.1) }.eraseToAnyPublisher()
-    }
-    
-    /// Unlike cyclonetQuury, this function does not attempt to decode the data, and simply
-    /// returns Void as the value in the publisher (on success).
-    /// - Parameters:
-    ///   - url: URL for query
-    ///   - body: body for query (optional)
-    public func cyclonetHttpCall(_ url: URL, body: Data? = nil, queue: DispatchQueue? = nil) -> AnyPublisher<Void, Error> {
-        return cyclonetHttpQuery(url, body: body, queue: queue).map { (result: Any) in () }.eraseToAnyPublisher()
-    }
-    
-    
-    // MARK: - Blocking REST calls (deprecated)
-    
-    /// Upload data from a file and wait
-    /// - Parameters:
-    ///   - url: URL for post
-    ///   - fileURL: a file URL for the body
-    ///   - progressHandler: optional progress callback, taking (nbytesSent, totalSize)
-    /// - Returns: Data and response.
-    /// - Note: This is a blocking call (and deprecated).  Use the publisher version instead.
-    public func httpQueryAndWait(_ url: URL, fromFile fileURL: URL, progressHandler: ((Int64, Int64) -> Void)? = nil) throws -> (Data, HTTPURLResponse) {
-        let queue = DispatchQueue(label: "com.pixar.blockTillCompletion")
-        return try httpQuery(url, fromFile: fileURL, queue: queue).blockTillCompletion(queue)
-    }
-    
-   
-    /**
-     Launch the given query and wait for a reply.
-     
-     - parameter url: URL for query
-     - parameter body: body for query (optional)
-     - parameter post: if the method should be post
-     - parameter progressHandler: optional progress callback, taking (nbytesSent, totalSize)
-     
-     - throws: Throws if something goes wrong.
-     
-     - returns: a tuple (data, response)
-     
-     Note: if a body is supplied, post is taken to be true.
-     */
-    public func httpQueryAndWait(_ url: URL, body: Data? = nil, post: Bool = false,  progressHandler: ((Int64, Int64) -> Void)? = nil) throws -> (Data, HTTPURLResponse) {
-        // print("----> Begin blocking async httpQueryAndWait for \(url)...")
-        // defer { print("<---- Return from blocking async httpQueryandWait for \(url)") }
-
-        #if !os(Linux)
-        let queue = DispatchQueue(label: "com.pixar.blockTillCompletion")
-        return try httpQuery(url, body: body, post: post,
-                            progressHandler: progressHandler).blockTillCompletion(queue)
-        #else
-        var statusCode: Int32 = 0
-        var nbytes: Int32 = 0
-
-        guard let bytesPtr = curlHelper_download(url.absoluteString, &statusCode, &nbytes) else {
-            throw GeneralError("httpQueryAndWait: curlHelper_download return NULL: this should not happen.")
-        }
-        defer { curlHelper_delete_result(bytesPtr) }
-
-        guard let response = HTTPURLResponse(url: url, statusCode: Int(statusCode),
-                                             httpVersion: nil, headerFields: nil) else {
-            throw GeneralError("Failed to construct an HTTPURLReponse in httpQueryAndWait: this should not happen")
-        
-        }
-
-        if statusCode == 200 {
-            return (Data(bytes: bytesPtr, count: Int(nbytes)), response)
-        }
-        else {
-            return (Data(bytes: bytesPtr, count: Int(nbytes)+1), response)
-        }
-        #endif
-    }
-    
-  
-    /// Wait for a Cyclonet query to complete.
-    /// - Parameters:
-    ///   - url: URL for query
-    ///   - body: body for query (optional)
-    /// - Throws: On error, throws a CyclonetError.
-    /// - Note: this is a blocking calling (and thus deprecated).  Use the publisher version instead.
-    public func cyclonetHttpCallAndWait(_ url: URL, body: Data? = nil) throws {
-        let _: Any = try cyclonetHttpQueryAndWait(url, body: body)
-    }
-    
-    
-    /// Wait for a query to complete, returning the requested type.
-    /// - Parameters:
-    ///   - url: URL for query
-    ///   - body: body for query (optional)
-    ///   - progressHandler: optional progress callback, taking (nbytesSent, totalSize)
-    /// - Throws: errors for network errors or type errors.
-    /// - Returns: Specified datatype
-    /// - Note: This is a blocking call (and deprecated).  Use the publisher version instead.
-    ///
-    /// The query must return a json string, which is decoded into the required type.
-    ///        The json string has the format
-    ///
-    ///        ["<protocol-version>", <data>]
-    ///
-    /// When the request completes normally, <data> is returned.
-    /// If the server responds to the query but encounters an eror, the returned
-    /// json object has the form
-    ///
-    ///   ["<protocol-version>", statusCode, "<shortError>", "<traceback>"]
-    ///
-    /// and a CyclonetError of either ClientError or ServerError is thrown.
-    public func cyclonetHttpQueryAndWait<T>(_ url: URL, body: Data? = nil, progressHandler: ((Int64, Int64) -> Void)? = nil) throws -> T {
-        let (data, response) = try httpQueryAndWait(url, body: body, progressHandler: progressHandler)
-        return try decodeCyclonetResponse(data: data, response: response)
-    }
-    
-    /// Wait for n upload to complete, returning the requested type.
-    /// - Parameters:
-    ///   - url: URL for query
-    ///   - fromFile: fileURL containing data to be uploaded
-    ///   - progressHandler: optional progress callback, taking (nbytesSent, totalSize)
-    /// - Throws: errors for network errors or type errors.
-    /// - Returns: Specified datatype
-    /// - Note: This is a blocking call (and deprecated).  Use the publisher version instead.
-    ///
-    /// The query must return a json string, which is decoded into the required type.
-    ///        The json string has the format
-    ///
-    ///        ["<protocol-version>", <data>]
-    ///
-    /// When the request completes normally, <data> is returned.
-    /// If the server responds to the query but encounters an eror, the returned
-    /// json object has the form
-    ///
-    ///   ["<protocol-version>", statusCode, "<shortError>", "<traceback>"]
-    ///
-    /// and a CyclonetError of either ClientError or ServerError is thrown.
-    public func cyclonetHttpQueryAndWait<T>(_ url: URL, fromFile fileURL: URL, progressHandler: ((Int64, Int64) -> Void)? = nil) throws -> T {
-        let (data, response) = try httpQueryAndWait(url, fromFile: fileURL, progressHandler: progressHandler)
-        return try decodeCyclonetResponse(data: data, response: response)
     }
 }
 

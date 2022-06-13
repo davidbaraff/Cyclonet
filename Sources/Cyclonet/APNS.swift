@@ -6,13 +6,13 @@
 //  Copyright © 2019 David Baraff. All rights reserved.
 //
 
-#if !os(Linux)
 import Foundation
 import Starscream
 import Debmate
 
-fileprivate let apnsServer = "apns-production.pixar.com"
-fileprivate let apnsSandboxServer = "apns-sandbox.pixar.com"
+fileprivate let apnsServer = "midnightharmonics.com"
+fileprivate let apnsSandboxServerPort = 8080
+fileprivate let apnsServerPort = 8081
 
 /// Configure APNS notifications using Pixar's APNS server
 public class APNSHandler {
@@ -95,8 +95,9 @@ public class APNSHandler {
     static public func setSubscription(category: String, values: [String],
                                        deviceToken: String, appBundle: String,
                                        sandbox: Bool,
-                                       login: String, deviceDescription: String) throws {
-        let url = try Debmate.Util.createURL(host: sandbox ? apnsSandboxServer : apnsServer,
+                                       login: String, deviceDescription: String) async throws {
+        let url = try Debmate.Util.createURL(host: apnsServer,
+                                             port: sandbox ? apnsSandboxServerPort : apnsServerPort,
                                              command: "setSubscriptions",
                                              parameters: ["category" : category,
                                                           "values" : values,
@@ -104,8 +105,7 @@ public class APNSHandler {
                                                           "login" : login,
                                                           "appBundle" : appBundle,
                                                           "deviceDescription" : deviceDescription])
-        let _: String = try Cyclonet.sharedCyclonetURLSession.cyclonetHttpQueryAndWait(url)
+        let _: String = try await Cyclonet.sharedCyclonetURLSession.cyclonetHttpQuery(url)
     }
 }
-#endif
 
