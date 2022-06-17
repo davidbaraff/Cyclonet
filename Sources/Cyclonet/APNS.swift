@@ -104,8 +104,9 @@ public class APNSHandler {
                                                           "deviceToken" : deviceToken,
                                                           "login" : login,
                                                           "appBundle" : appBundle,
-                                                          "deviceDescription" : deviceDescription])
-        let _: String = try await Cyclonet.sharedCyclonetURLSession.cyclonetHttpQuery(url)
+                                                          "deviceDescription" : deviceDescription],
+                                             https: true)
+        let _: Bool = try await Cyclonet.sharedCyclonetURLSession.cyclonetHttpQuery(url)
     }
 }
 

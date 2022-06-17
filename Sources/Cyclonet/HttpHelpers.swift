@@ -288,31 +288,21 @@ private func decodeCyclonetResponse<T>(data: Data, response: HTTPURLResponse) th
     if (response.statusCode == 200) {
         if resultList.count != 2 {
             throw CyclonetQueryError(.illegalJsonData("expected array of 2 objects; got length \(resultList.count) instead"),
-                                    statusCode:response.statusCode)
+                                    statusCode: response.statusCode)
         }
         
-        guard let resultTuple = resultList[1] as? [AnyObject] else {
-            throw CyclonetQueryError(.unexpectedDataType("expected object tuple; got \(type(of: resultList[1]))"),
-                                    statusCode:response.statusCode)
-        }
-        
-        if resultTuple.count != 2 {
-            throw CyclonetQueryError(.unexpectedDataType("expected tuple of length; tuple had length \(resultTuple.count)"),
-                                    statusCode:response.statusCode)
-        }
-        
-        guard let resultCode = resultTuple[0] as? Bool else {
-            throw CyclonetQueryError(.unexpectedDataType("expected bool in tuple at position 0; got \(type(of: resultTuple[0])) instead"),
-                                    statusCode:response.statusCode)
+        guard let resultCode = resultList[0] as? Bool else {
+            throw CyclonetQueryError(.unexpectedDataType("expected bool in tuple at position 0; got \(type(of: resultList[0])) instead"),
+                                    statusCode: response.statusCode)
         }
         
         guard resultCode else {
             throw CyclonetQueryError(.badReturnCodeError)
         }
         
-        guard let resultValue = resultTuple[1] as? T else {
-            throw CyclonetQueryError(.unexpectedDataType("expected \(type(of: T.self)) in tuple at position 1; got \(type(of: resultTuple[1])) instead"),
-                                    statusCode:response.statusCode)
+        guard let resultValue = resultList[1] as? T else {
+            throw CyclonetQueryError(.unexpectedDataType("expected \(type(of: T.self)) in tuple at position 1; got \(type(of: resultList[1])) instead"),
+                                    statusCode: response.statusCode)
         }
         
         return resultValue
