@@ -7,7 +7,6 @@
 //
 
 import Foundation
-import Starscream
 import Debmate
 
 fileprivate let apnsServer = "midnightharmonics.com"

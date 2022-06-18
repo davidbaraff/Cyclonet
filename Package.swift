@@ -15,13 +15,11 @@ let package = Package(
             targets: ["Cyclonet"]),
     ],
     dependencies: [
-        .package(url: "git@github.com:davidbaraff/Debmate.git", .branch("main")),
-	.package(url: "git@github.com:davidbaraff/Starscream.git",
-                 .branch("4.0.4-debmods"))
+        .package(url: "git@github.com:davidbaraff/Debmate.git", .branch("main"))
     ],
     targets: [
         .target(name: "Cyclonet",
-                dependencies: ["Starscream", "Debmate"],
+                dependencies: ["Debmate"],
                 path: "Sources/Cyclonet")
     ]
 )
