@@ -271,7 +271,7 @@ fileprivate func resumeContinuation(continuation: CheckedContinuation<(Data, HTT
 
 private func decodeCyclonetResponse<T>(data: Data, response: HTTPURLResponse) throws -> T {
     var decodedObject:Any
-    
+
     do {
         decodedObject = try JSONSerialization.jsonObject(with: data, options:.mutableContainers)
     } catch {
@@ -309,16 +309,16 @@ private func decodeCyclonetResponse<T>(data: Data, response: HTTPURLResponse) th
     }
     
     if response.statusCode == 400 || response.statusCode == 500 {
-        if resultList.count != 4 {
+        if resultList.count != 3 {
             throw CyclonetQueryError(.illegalJsonData("expected array of 3 objects; got length \(resultList.count) instead"),
                                     statusCode:response.statusCode)
         }
         
         if response.statusCode == 400 {
-            throw CyclonetQueryError(.clientError(String(describing: resultList[2]), String(describing: resultList[3])),
+            throw CyclonetQueryError(.clientError(String(describing: resultList[1]), String(describing: resultList[2])),
                                     statusCode:response.statusCode)
         }
-        throw CyclonetQueryError(.serverError(String(describing: resultList[2]), String(describing: resultList[3])),
+        throw CyclonetQueryError(.serverError(String(describing: resultList[1]), String(describing: resultList[2])),
                                 statusCode:response.statusCode)
     }
     
